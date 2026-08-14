@@ -1,0 +1,3 @@
+C:/programs/code-the-classics/pong/build/CMakeFiles/pong.dir
+C:/programs/code-the-classics/pong/build/CMakeFiles/edit_cache.dir
+C:/programs/code-the-classics/pong/build/CMakeFiles/rebuild_cache.dir
