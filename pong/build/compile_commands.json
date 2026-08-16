@@ -1,8 +1,0 @@
-[
-{
-  "directory": "C:/programs/code-the-classics/pong/build",
-  "command": "C:\\mingw64\\bin\\c++.exe -IC:/programs/code-the-classics/pong/lib/pudu/include -IC:/programs/code-the-classics/pong/lib/pudu/include/pudu -IC:/programs/code-the-classics/pong/lib/glm/include -g -std=gnu++23 -o CMakeFiles\\pong.dir\\src\\main.cpp.obj -c C:\\programs\\code-the-classics\\pong\\src\\main.cpp",
-  "file": "C:/programs/code-the-classics/pong/src/main.cpp",
-  "output": "C:/programs/code-the-classics/pong/build/CMakeFiles/pong.dir/src/main.cpp.obj"
-}
-]
