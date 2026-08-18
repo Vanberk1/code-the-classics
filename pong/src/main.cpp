@@ -9,6 +9,7 @@ constexpr uint32_t HALF_HEIGHT = HEIGHT / 2;
 
 constexpr float BAT_SPEED = 250;
 constexpr float BALL_SPEED = 300;
+constexpr float COLLISION_BOUNCE_FACTOR = 0.3f;
 
 constexpr uint32_t MAX_SCORE = 10;
 
@@ -37,7 +38,7 @@ struct Ball
     glm::vec2 size = { 10, 10 };
     glm::vec2 velocity = { 0, 0 };
     float speed = BALL_SPEED;
-    bool collided = false;
+    bool isDirectionLeft = false;
 };
 
 struct PongGame
@@ -49,8 +50,8 @@ struct PongGame
         leftBatScore = 0;
         rightBatScore = 0;
         
-        leftBat.position = { 100, HALF_HEIGHT };
-        rightBat.position = { WIDTH - 100, HALF_HEIGHT };
+        leftBat.position = { 150, HALF_HEIGHT };
+        rightBat.position = { WIDTH - 150, HALF_HEIGHT };
 
         resetBall();
 
@@ -89,11 +90,23 @@ struct PongGame
             ball.velocity.y = -ball.velocity.y;
         }
 
-        // TODO: Make the ball bounce angle change according to which segment of the bat hit.  
         // Check collision with left and right bats.
-        if(CheckBallBatCollision(ball, leftBat) || CheckBallBatCollision(ball, rightBat))
+        if((ball.isDirectionLeft && CheckBallBatCollision(leftBat)) || CheckBallBatCollision(rightBat))
         {
+            Bat& bat = ball.isDirectionLeft ? leftBat : rightBat;
+            
+            ball.position.x = ball.isDirectionLeft ? leftBat.position.x + leftBat.size.x : rightBat.position.x - rightBat.size.x;
             ball.velocity.x = -ball.velocity.x;
+
+            // Calculate how far from the center the ball collided to modify 
+            // the bounce angle by a factor of this distance.
+            float collisionDistanceNormalized = (ball.position.y - bat.position.y) / (bat.size.y / 2.0f);
+            ball.velocity.y += collisionDistanceNormalized * COLLISION_BOUNCE_FACTOR;
+            ball.velocity = glm::normalize(ball.velocity);
+            ball.velocity.y = std::clamp(ball.velocity.y, -0.8f, 0.8f); // Prevents to strong vertical velocities.
+            ball.velocity = glm::normalize(ball.velocity);
+            
+            ball.isDirectionLeft = !ball.isDirectionLeft;
         }
 
         if(ball.position.x - ball.size.x < 0)
@@ -110,11 +123,11 @@ struct PongGame
 
     void updateLeftPlayerBat(float dt)
     {
-        if(app.isKeyPressed(pudu::Key::W) && (leftBat.position.y - leftBat.size.y / 2 > 0))
+        if(app.isKeyPressed(pudu::Key::W) && (leftBat.position.y > 0))
         {
             leftBat.position.y -= leftBat.speed * dt;
         }
-        else if(app.isKeyPressed(pudu::Key::S) && (leftBat.position.y + leftBat.size.y / 2 < HEIGHT))
+        else if(app.isKeyPressed(pudu::Key::S) && (leftBat.position.y < HEIGHT))
         {
             leftBat.position.y += leftBat.speed * dt;
         }
@@ -143,7 +156,7 @@ struct PongGame
         float weight2 = 1.0f - weight1;
 
         float targetY = (weight1 * targetY1) + (weight2 * targetY2);
-        float movementFactor = 5.0f;
+        float movementFactor = 4.0f;
 
         bat.position.y += std::min(BAT_SPEED, std::max(-BAT_SPEED, targetY - bat.position.y)) * movementFactor * dt;
     }
@@ -162,7 +175,8 @@ struct PongGame
     {
         ball.position = { HALF_WIDTH, HALF_HEIGHT };
         int randDir = pudu::utils::GetRandomInt(-100, 100);
-        ball.velocity = { randDir > 0 ? ball.speed : -ball.speed, randDir };
+        ball.isDirectionLeft = randDir < 0;
+        ball.velocity = { ball.isDirectionLeft ? -ball.speed : ball.speed, 0 };
         ball.velocity = glm::normalize(ball.velocity);
     }
 
@@ -171,30 +185,12 @@ struct PongGame
         return leftBatScore >= MAX_SCORE || rightBatScore >= MAX_SCORE;
     }
 
-    bool CheckBallBatCollision(const Ball& ball, const Bat& bat)
+    bool CheckBallBatCollision(const Bat& bat)
     {
-        // Rectangle representing bat collision box extended with the size of the ball
-        // to check the collision agains just the ball position. 
-        glm::vec4 batRect = {
-            bat.position.x - bat.size.x / 2,
-            bat.position.y - bat.size.y / 2,
-            bat.size.x,
-            bat.size.y,
-        };
-
-        glm::vec4 ballRect = {
-            ball.position.x - ball.size.x / 2,
-            ball.position.y - ball.size.y / 2,
-            ball.size.x,
-            ball.size.y
-        };
-        
-        return (
-            batRect.x + batRect.z >= ballRect.x &&
-            ballRect.x + ballRect.z >= batRect.x &&
-            batRect.y + batRect.w >= ballRect.y &&
-            ballRect.y + ballRect.w >= batRect.y
-        );
+        return ((ball.position.x > bat.position.x - bat.size.x / 2) && 
+                (ball.position.x < bat.position.x + bat.size.x / 2) &&        
+                (ball.position.y > bat.position.y - bat.size.y / 2) && 
+                (ball.position.y < bat.position.y + bat.size.y / 2));
     }
 
     pudu::Application& app;
@@ -327,6 +323,7 @@ int main()
         else
         {
             std::cout << "Invalid GameState: " << static_cast<int>(state) << std::endl;
+            return 1;
         }
         
         // Render game states
@@ -362,6 +359,7 @@ int main()
         else
         {
             std::cout << "Invalid State: " << static_cast<int>(state) << std::endl;
+            return 1;
         }
 
         app.showFrame();
