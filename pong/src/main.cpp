@@ -176,7 +176,7 @@ struct PongGame
         ball.position = { HALF_WIDTH, HALF_HEIGHT };
         int randDir = pudu::utils::GetRandomInt(-100, 100);
         ball.isDirectionLeft = randDir < 0;
-        ball.velocity = { ball.isDirectionLeft ? -ball.speed : ball.speed, 0 };
+        ball.velocity = { ball.isDirectionLeft ? -ball.speed : ball.speed, randDir };
         ball.velocity = glm::normalize(ball.velocity);
     }
 

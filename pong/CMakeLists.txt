@@ -14,7 +14,7 @@ file(GLOB_RECURSE SOURCES
 add_executable(pong ${SOURCES})
 
 target_link_directories(pong PRIVATE
-    ${CMAKE_SOURCE_DIR}/lib/pudu/lib
+    ${CMAKE_SOURCE_DIR}/../lib/pudu/lib
 )
 
 # Link against pudu
@@ -26,7 +26,7 @@ target_link_libraries(pong PRIVATE
 
 # Include directories
 target_include_directories(pong PRIVATE 
-    ${CMAKE_SOURCE_DIR}/lib/pudu/include
-    ${CMAKE_SOURCE_DIR}/lib/pudu/include/pudu
-    ${CMAKE_SOURCE_DIR}/lib/glm/include
+    ${CMAKE_SOURCE_DIR}/../lib/pudu/include
+    ${CMAKE_SOURCE_DIR}/../lib/pudu/include/pudu
+    ${CMAKE_SOURCE_DIR}/../lib/glm/include
 )
