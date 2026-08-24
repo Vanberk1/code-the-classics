@@ -3,58 +3,82 @@
 #include <iostream>
 #include <variant>
 
-constexpr uint32_t NUM_ROWS = 20;
-constexpr uint32_t NUM_COLUMNS = 28;
+constexpr uint32_t SCALE_FACTOR = 2;
 
-constexpr uint32_t BLOCK_SIZE = 32;
+constexpr uint32_t BLOCK_SIZE = 16 * SCALE_FACTOR;
 constexpr uint32_t HALF_BLOCK_SIZE = BLOCK_SIZE / 2;
 
-constexpr float GRAVITY = 20.0f;
+constexpr uint32_t LEVEL_X_OFFSET = 2 * BLOCK_SIZE;
 
-constexpr uint32_t WIDTH = (NUM_COLUMNS * BLOCK_SIZE) + BLOCK_SIZE * 2;
+constexpr uint32_t NUM_ROWS = 26;
+constexpr uint32_t NUM_COLUMNS = 28;
+
+constexpr uint32_t WIDTH = NUM_COLUMNS * BLOCK_SIZE + 4 * BLOCK_SIZE;
 constexpr uint32_t HEIGHT = NUM_ROWS * BLOCK_SIZE;
+
+constexpr float GRAVITY = 20.0f;
+constexpr float PLAYER_SPEED = 250.0f;
+constexpr float PLAYER_JUMP_SPEED = 700.0f;
 
 const std::string TILESET_TEXTURE_NAME = "tileset_texture";
 const std::filesystem::path TILESET_TEXTURE_PATH = "assets/tileset.png";
 constexpr uint32_t TILESET_TEXTURE_ROWS = 2;
 constexpr uint32_t TILESET_TEXTURE_COLUMNS = 2;
 
+const std::filesystem::path BUB_TEXTURE_PATH = "assets/bub.png";
+
 using Level = std::array<std::string, NUM_ROWS>;
 const std::vector<Level> LEVELS = {
-    { 
-        "XXXXX     XXXXXXXX     XXXXX",
-        "","","","",
-        "   XXXXXXX        XXXXXXX   ",
-        "","","",
-        "   XXXXXXXXXXXXXXXXXXXXXX   ",
-        "","","",
-        "XXXXXXXXX          XXXXXXXXX",
-        "","","","",
-        "XXXXX     XXXXXXXX     XXXXX"
+    {
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "", "", "", "", "", "", "", "",
+        "", 
+        "XX   XXXXXXXXXXXXXXXXXX   XX",
+        "", "", "", "",
+        "XX   XXXXXXXXXXXXXXXXXX   XX", 
+        "", "", "", "",
+        "XX   XXXXXXXXXXXXXXXXXX   XX", 
+        "", "", "", "",
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     },
     {
-        "XXXX    XXXXXXXXXXXX    XXXX",
-        "","","","",
-        "    XXXXXXXXXXXXXXXXXXXX    ",
-        "","","",
-        "XXXXXX                XXXXXX",
-        "      X              X      ",
-        "       X            X       ",
-        "        X          X        ",
-        "         X        X         ",
-        "","","","",
-        "XXXX    XXXXXXXXXXXX    XXXX"
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "", "", "", "",
+        "           XXXXXX           ", 
+        "", "", "", "",
+        "        XXXXX  XXXXX        ",
+        "", "", "", "",
+        "      XXXXXXXXXXXXXXXX      ", 
+        "", "", "", "",
+        "  XXXXXXX  XXXXXX  XXXXXXXX ", 
+        "", "", "", "",
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     },
     {
-        "XXXX    XXXX    XXXX    XXXX",
-        "","","","",
-        "  XXXXXXXX        XXXXXXXX  ",
-        "","","",
-        "XXXX      XXXXXXXX      XXXX",
-        "","","",
-        "    XXXXXX        XXXXXX    ",
-        "","","","",
-        "XXXX    XXXX    XXXX    XXXX"
+        "XXXXXXX    XXXXXX    XXXXXXX",
+        "", "", "", "",
+        "   XXXXXXXX      XXXXXXXX   ", 
+        "   X                    X   ", 
+        "   X                    X   ", 
+        "   X                    X   ", 
+        "   X                    X   ",
+        "   XXXXXXXXX    XXXXXXXXX   ",
+        "   X                    X   ", 
+        "   X                    X   ", 
+        "   X                    X   ", 
+        "   X                    X   ",
+        "   XXXXXXXXXX  XXXXXXXXXX   ", 
+        "", "", "", "",
+        "XXXXX  XXX        XXX  XXXXX",
+        "", "", "", "",
+        "XXXXXXX    XXXXXX    XXXXXXX"
+    },
+    {
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "", "", "", "", "", "", "", "",
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     }
 };
 
@@ -89,9 +113,13 @@ struct PhysicsEntity : EntityBase
                 landed = true;
             }
 
-            if(position.y >= HEIGHT)
+            if(position.y > HEIGHT)
             {
                 position.y = 0;
+            }
+            else if(position.y < 0)
+            {
+                position.y = HEIGHT;
             }
         }
     }
@@ -99,31 +127,43 @@ struct PhysicsEntity : EntityBase
     bool moveAndCollide(float dx, float dy, float speed)
     {
         glm::vec2 newPos = position + glm::vec2(dx, dy) * speed;
-        // std::cout << "delta (" << dx << ", " << dy << ") speed " << speed << std::endl;
-        // std::cout << "newPos (" << newPos.x << ", " << newPos.y << ")" << std::endl;
+
+        glm::vec2 bottom = { newPos.x, newPos.y + size.y / 2 };
+        glm::vec2 left = { newPos.x - size.x / 2, newPos.y };
+        glm::vec2 right = { newPos.x + size.x / 2, newPos.y };
         
-        if(newPos.x < BLOCK_SIZE || newPos.x > WIDTH - BLOCK_SIZE)
+        if(left.x < LEVEL_X_OFFSET || right.x > WIDTH - LEVEL_X_OFFSET)
         {
             return true;
         }
         
         // TODO: Replace with proper AABB collision to avoid subtracting a 
         // small factor to prevent entities from getting stuck in blocks
-        if(dy > 0 && isBlock(newPos))
+        bool collided = false;
+        if(dy > 0 && isBlock({newPos.x, bottom.y}))
         {
-            position.y = std::floor(newPos.y / BLOCK_SIZE) * BLOCK_SIZE - 0.1f;
-
-            return true;
+            collided = true;
+        }
+        else if(dx < 0 && isBlock(left))
+        {
+            collided = true;
+        }
+        else if(dx > 0 && isBlock(right))
+        {
+            collided = true;
         }
 
-        position = newPos;
+        if(!collided)
+        {
+            position = newPos;
+        }
 
-        return false;
+        return collided;
     }
 
     bool isBlock(glm::vec2 pos)
     {
-        uint32_t gridX = static_cast<uint32_t>(pos.x / BLOCK_SIZE);
+        uint32_t gridX = static_cast<uint32_t>((pos.x - LEVEL_X_OFFSET) / BLOCK_SIZE);
         uint32_t gridY = static_cast<uint32_t>(pos.y / BLOCK_SIZE);
 
         // std::cout << "posX: " << pos.x << " posY: " << pos.y << std::endl;
@@ -142,6 +182,7 @@ struct PhysicsEntity : EntityBase
     // Needed to check collision with the level blocks
     uint32_t levelGridIndex;
 
+    glm::vec2 size = { 0, 0 };
     glm::vec2 velocity = { 0, 0 };
     float maxFallSpeed = 300;
     bool applyGravity = false;
@@ -153,7 +194,12 @@ struct Player : PhysicsEntity
     Player(pudu::Application& app, uint32_t level, bool active)
     : PhysicsEntity(app, level)
     { 
-        isActive = active; 
+        isActive = active;
+
+        // TODO: Player texture should be set according to the number of players
+        texture = std::make_shared<pudu::Texture>(BUB_TEXTURE_PATH);
+        texture->setRows(1);
+        texture->setColumns(2);
     }
 
     void update(float dt) override
@@ -172,20 +218,28 @@ struct Player : PhysicsEntity
         if(app.isKeyJustPressed(pudu::Key::Z) && landed)
         {
             // std::cout << "jump" << std::endl; 
-            velocity.y = -570;
+            velocity.y = -PLAYER_JUMP_SPEED;
             landed = false;
         }
 
-        moveAndCollide(velocity.x, 0, 200 * dt);
+        if(velocity.x != 0)
+        {
+            facingRight = velocity.x > 0;
+        }
+
+        moveAndCollide(velocity.x, 0, PLAYER_SPEED * dt);
     }
 
     void draw() override
     {
-        glm::vec2 offset = { static_cast<float>(HALF_BLOCK_SIZE), -static_cast<float>(HALF_BLOCK_SIZE) };
-        app.drawRect(position + offset, { BLOCK_SIZE, BLOCK_SIZE }, 0, { 0, 1, 0, 1 });
+        app.drawTextureFrame(*texture, position, spriteSize, 0, 0, glm::vec4(1), !facingRight);
+        // app.drawRect(position, size, 0, { 1, 0, 0, 1}, false);
+        // app.drawRect(position, spriteSize, 0, { 0, 1, 0, 1}, false);
     }
 
-    float dx = 1;
+    std::shared_ptr<pudu::Texture> texture;
+    glm::vec2 spriteSize;
+    bool facingRight = true;
 };
 
 struct Enemy : PhysicsEntity
@@ -251,13 +305,12 @@ public:
         // Draw level grid
         for(size_t y = 0; y < NUM_ROWS; ++y)
         {
-            if(y < NUM_ROWS - 1)
-            {
-                glm::vec2 leftBlockPos = { HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
-                glm::vec2 rightBlockPos = { WIDTH - HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
-                m_app.drawTextureFrame(*texture, leftBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
-                m_app.drawTextureFrame(*texture, rightBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
-            }
+            glm::vec2 leftBlockPos = { HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
+            glm::vec2 rightBlockPos = { WIDTH - HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
+            m_app.drawTextureFrame(*texture, leftBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app.drawTextureFrame(*texture, leftBlockPos + glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app.drawTextureFrame(*texture, rightBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app.drawTextureFrame(*texture, rightBlockPos - glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
             
             auto row = m_levelGrid[y];
             if(row.empty())
@@ -265,7 +318,7 @@ public:
                 continue;
             }
 
-            uint32_t offsetX = BLOCK_SIZE;
+            uint32_t offsetX = LEVEL_X_OFFSET;
             for(size_t x = 0; x < NUM_COLUMNS; ++x)
             {
                 if(row[x] != ' ')
@@ -290,11 +343,15 @@ private:
 
         m_levelGrid = LEVELS[m_currentLevel];
 
+        m_entities.clear();
+
         for(uint32_t i = 0; i < m_numPlayers; ++i)
         {
             Player p(m_app, m_currentLevel, true);
             p.applyGravity = true;
-            p.position = { 200, 100 };
+            p.position = { 120, 768 };
+            p.size = glm::vec2(16 * SCALE_FACTOR * 2);
+            p.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
             m_entities.push_back(p);
         }
 
