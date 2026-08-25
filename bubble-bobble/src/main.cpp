@@ -18,7 +18,8 @@ constexpr uint32_t HEIGHT = NUM_ROWS * BLOCK_SIZE;
 
 constexpr float GRAVITY = 20.0f;
 constexpr float PLAYER_SPEED = 250.0f;
-constexpr float PLAYER_JUMP_SPEED = 700.0f;
+constexpr float PLAYER_JUMP_SPEED = 650.0f;
+constexpr float MAX_FALL_SPEED = 150.0f;
 
 const std::string TILESET_TEXTURE_NAME = "tileset_texture";
 const std::filesystem::path TILESET_TEXTURE_PATH = "assets/tileset.png";
@@ -50,7 +51,7 @@ const std::vector<Level> LEVELS = {
         "", "", "", "",
         "      XXXXXXXXXXXXXXXX      ", 
         "", "", "", "",
-        "  XXXXXXX  XXXXXX  XXXXXXXX ", 
+        "  XXXXXXX  XXXXXX  XXXXXXX  ", 
         "", "", "", "",
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     },
@@ -104,23 +105,18 @@ struct PhysicsEntity : EntityBase
     {
         if(applyGravity)
         {
-            velocity.y = std::min(velocity.y + GRAVITY, maxFallSpeed);
+            velocity.y = std::min(velocity.y + GRAVITY, MAX_FALL_SPEED);
             // std::cout << "velocity (" << velocity.x << ", " << velocity.y << ")" << std::endl;
             if(moveAndCollide(0, velocity.y > 0 ? 1 : -1, std::abs(velocity.y * dt)))
             {
-                // std::cout << "landed" << std::endl;
-                velocity.y = 0;
                 landed = true;
+                topCollision = false;
             }
-
-            if(position.y > HEIGHT)
-            {
-                position.y = 0;
-            }
-            else if(position.y < 0)
-            {
-                position.y = HEIGHT;
-            }
+        }
+        
+        if(position.y > HEIGHT)
+        {
+            position.y = 0;
         }
     }
 
@@ -129,6 +125,7 @@ struct PhysicsEntity : EntityBase
         glm::vec2 newPos = position + glm::vec2(dx, dy) * speed;
 
         glm::vec2 bottom = { newPos.x, newPos.y + size.y / 2 };
+        glm::vec2 top = { newPos.x, newPos.y - size.y / 2 };
         glm::vec2 left = { newPos.x - size.x / 2, newPos.y };
         glm::vec2 right = { newPos.x + size.x / 2, newPos.y };
         
@@ -136,20 +133,42 @@ struct PhysicsEntity : EntityBase
         {
             return true;
         }
-        
+
+        bool collided = false;
         // TODO: Replace with proper AABB collision to avoid subtracting a 
         // small factor to prevent entities from getting stuck in blocks
-        bool collided = false;
-        if(dy > 0 && isBlock({newPos.x, bottom.y}))
+
+        // left and right positions are downscaled a little bit to prevent entities from getting stuck in tight spaces
+        if((dy > 0) && (isBlock(bottom) || isBlock({ left.x * 1.01f, bottom.y }) || isBlock({ right.x * 0.99f, bottom.y })))
         {
-            collided = true;
+            // Prevents player to get stuck in a column of tiles.
+            if(isBlock(position))
+            {
+                collided = false;
+            }
+            else 
+            {
+                position.y = static_cast<uint32_t>(newPos.y / BLOCK_SIZE) * BLOCK_SIZE - 0.01f;
+                velocity.y = 0;
+                collided = true;
+            }
         }
-        else if(dx < 0 && isBlock(left))
+        else if(dy < 0 && isBlock(top))
         {
-            collided = true;
+            topCollision = true;
         }
-        else if(dx > 0 && isBlock(right))
+        
+        if((dx < 0) && !topCollision && (isBlock(left) || isBlock({ left.x, bottom.y }) || isBlock({ left.x, top.y })))
         {
+            position.x = (static_cast<uint32_t>((newPos.x) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
+            velocity.x = 0;
+            collided = true;
+            
+        }
+        else if((dx > 0) && !topCollision && (isBlock(right) || isBlock({ right.x, bottom.y }) || isBlock({ right.x, top.y })))
+        {
+            position.x = (static_cast<uint32_t>((right.x - LEVEL_X_OFFSET) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
+            velocity.x = 0;
             collided = true;
         }
 
@@ -184,9 +203,13 @@ struct PhysicsEntity : EntityBase
 
     glm::vec2 size = { 0, 0 };
     glm::vec2 velocity = { 0, 0 };
-    float maxFallSpeed = 300;
     bool applyGravity = false;
     bool landed = false;
+    
+    // TODO: This flag prevents player from collide 
+    // horizontally while jumping up through tiles.
+    // Remove or replace with some state machine.
+    bool topCollision = false; 
 };
 
 struct Player : PhysicsEntity
@@ -215,11 +238,17 @@ struct Player : PhysicsEntity
         {
             velocity.x += 1;
         }
-        if(app.isKeyJustPressed(pudu::Key::Z) && landed)
+        if(app.isKeyJustPressed(pudu::Key::Z) && landed && velocity.y == 0)
         {
             // std::cout << "jump" << std::endl; 
             velocity.y = -PLAYER_JUMP_SPEED;
             landed = false;
+        }
+
+        float speed = PLAYER_SPEED;
+        if(velocity.y != 0)
+        {
+            speed /= 2;
         }
 
         if(velocity.x != 0)
@@ -227,14 +256,12 @@ struct Player : PhysicsEntity
             facingRight = velocity.x > 0;
         }
 
-        moveAndCollide(velocity.x, 0, PLAYER_SPEED * dt);
+        moveAndCollide(velocity.x, 0, speed * dt);
     }
 
     void draw() override
     {
         app.drawTextureFrame(*texture, position, spriteSize, 0, 0, glm::vec4(1), !facingRight);
-        // app.drawRect(position, size, 0, { 1, 0, 0, 1}, false);
-        // app.drawRect(position, spriteSize, 0, { 0, 1, 0, 1}, false);
     }
 
     std::shared_ptr<pudu::Texture> texture;
