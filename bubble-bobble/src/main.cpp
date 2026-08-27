@@ -87,9 +87,11 @@ template <typename T> int sign(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
+struct Game;
 struct EntityContext
 {
     std::shared_ptr<pudu::Application> app;
+    std::shared_ptr<Game> game;
     uint32_t levelIndex;
 };
 
@@ -216,10 +218,15 @@ struct Player
     std::shared_ptr<pudu::Texture> texture;
     glm::vec2 spriteSize;
 
-    Player(std::shared_ptr<pudu::Application> app, uint32_t level, bool active)
+    Player(
+        std::shared_ptr<pudu::Application> app, 
+        std::shared_ptr<Game> game, 
+        uint32_t level, 
+        bool active)
     {
-        ctx = { app, level };
+        ctx = { app, game, level };
         data.isActive = active;
+        data.applyGravity = true;
 
         // TODO: Player texture should be set according to the number of players
         texture = std::make_shared<pudu::Texture>(BUB_TEXTURE_PATH);
@@ -227,48 +234,13 @@ struct Player
         texture->setColumns(2);
     }
 
-    void update(float dt)
-    {
-        // PhysicsEntity::update(dt);
-
-        auto& velocity = data.velocity;
-
-        velocity.x = 0;
-        if(ctx.app->isKeyPressed(pudu::Key::LEFT))
-        {
-            velocity.x -= 1;
-        }
-        if(ctx.app->isKeyPressed(pudu::Key::RIGHT))
-        {
-            velocity.x += 1;
-        }
-        if(ctx.app->isKeyJustPressed(pudu::Key::Z) && data.landed && velocity.y == 0)
-        {
-            // std::cout << "jump" << std::endl; 
-            velocity.y = -PLAYER_JUMP_SPEED;
-            data.landed = false;
-        }
-
-        float speed = PLAYER_SPEED;
-        if(velocity.y != 0)
-        {
-            speed /= 2;
-        }
-
-        if(velocity.x != 0)
-        {
-            data.facingRight = velocity.x > 0;
-        }
-
-        GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
-        MoveAndCollide(LEVELS[ctx.levelIndex], data, velocity.x, 0, speed * dt);
-    }
+    // NOTE: Player update method defined outside the struct body to use game object methods.
+    void update(float dt);
 
     void draw()
     {
         ctx.app->drawTextureFrame(*texture, data.position, spriteSize, 0, 0, glm::vec4(1), !data.facingRight);
     }
-
 
 };
 
@@ -287,16 +259,21 @@ struct Enemy
     float chageDirectionTimer = 0.0f;
     std::optional<glm::vec2> targetPos;
 
-    Enemy(std::shared_ptr<pudu::Application> app, uint32_t level, bool active, EnemyType type)
+    Enemy(
+        std::shared_ptr<pudu::Application> app,
+        std::shared_ptr<Game> game,
+        uint32_t level, 
+        bool active, 
+        EnemyType type)
     : type(type)
     {
-        ctx = { app, level };
+        ctx = { app, game, level };
         data.isActive = active;
+        data.applyGravity = true;
     }
 
     void update(float dt)
     {
-        
         chageDirectionTimer -= dt;
         
         GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
@@ -328,7 +305,64 @@ struct Enemy
 
 };
 
-using Entity = std::variant<Player, Enemy>;
+struct Bubble
+{
+    EntityContext ctx;
+    EntityData data;
+
+    float floatingTime = 1.0f;
+    float lifeTime = 5.0f;
+    bool floating = false;
+
+    Bubble(
+        std::shared_ptr<pudu::Application> app,
+        std::shared_ptr<Game> game,
+        uint32_t level, 
+        bool active)
+    {
+        ctx = { app, game, level };
+        data.isActive = active;
+        data.applyGravity = false;
+    }
+
+    void update(float dt)
+    {
+        lifeTime -= dt;
+        floatingTime -= dt;
+
+        if(floatingTime <= 0.0f)
+        {
+            floating = true;
+            data.velocity = { 0, -1 };
+        }
+
+        if(lifeTime <= 0.0f)
+        {
+            data.isActive = false;
+            return;
+        }
+        
+        if(!floating && MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * dt))
+        {
+            floating = true;
+            data.velocity = { 0, -1 };
+        }
+        else
+        {
+            data.position.y += data.velocity.y * (PLAYER_SPEED / 2.0f) * dt;
+        }
+    }
+
+    void draw()
+    {
+        if(data.isActive)
+        {
+            ctx.app->drawRect(data.position, data.size, 0, { 0.5, 0.5, 1, 1 });
+        }
+    }
+};
+
+using Entity = std::variant<Player, Enemy, Bubble>;
 
 class Game
 {
@@ -336,6 +370,8 @@ public:
     Game(std::shared_ptr<pudu::Application> app, uint32_t players = 0, uint32_t level = 0) 
     : m_app(app), m_numPlayers(players), m_currentLevel(level)
     {
+        m_instance = std::shared_ptr<Game>(this);
+
         auto tilesetTexture = 
             m_resources.loadTexture(TILESET_TEXTURE_NAME, TILESET_TEXTURE_PATH);
         tilesetTexture->setRows(TILESET_TEXTURE_ROWS);
@@ -360,6 +396,12 @@ public:
             playCurrentLevel();
         }
 
+        if(!m_entitiesToAdd.empty())
+        {
+            m_entities.insert(m_entities.end(), m_entitiesToAdd.begin(), m_entitiesToAdd.end());
+            m_entitiesToAdd.clear();
+        }
+
         std::optional<glm::vec2> playerPos = std::nullopt;
         if(m_playerIdx && m_playerIdx < m_entities.size())
         {
@@ -368,7 +410,6 @@ public:
 
         for(auto& ent : m_entities)
         {
-            
             std::visit([dt, &playerPos](auto&& e) { 
                 // Check at compilation if the entity is an enemy to set target position.
                 if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Enemy>)
@@ -377,7 +418,11 @@ public:
                 }
                 e.update(dt); 
             }, ent);
-        }        
+        }
+
+        std::erase_if(m_entities, [](auto& ent) {
+            return std::visit([](auto&& e) { return !e.data.isActive; }, ent);
+        });
     }
 
     void draw()
@@ -418,6 +463,15 @@ public:
         }
     }
 
+    void spawnBubble(glm::vec2 position, float directionX)
+    {
+        Bubble b(m_app, m_instance, m_currentLevel, true);
+        b.data.position = position;
+        b.data.velocity.x = directionX;
+        b.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+        m_entitiesToAdd.push_back(b);
+    }
+
 private:
     void playCurrentLevel()
     {
@@ -430,10 +484,9 @@ private:
 
         for(uint32_t i = 0; i < m_numPlayers; ++i)
         {
-            Player p(m_app, m_currentLevel, true);
+            Player p(m_app, m_instance, m_currentLevel, true);
             p.data.position = { 120, 768 };
             p.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
-            p.data.applyGravity = true;
             p.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
 
             m_playerIdx = m_entities.size();
@@ -441,22 +494,23 @@ private:
         }
 
         glm::vec2 enemyPos = { 200, 760 };
-        spawn_enemy(enemyPos, EnemyType::Normal);
+        spawnEnemy(enemyPos, EnemyType::Normal);
     }
 
-    void spawn_enemy(glm::vec2 position, EnemyType type)
+    void spawnEnemy(glm::vec2 position, EnemyType type)
     {
         // TODO: Setup enemy properties according the type.
-        Enemy e(m_app, m_currentLevel, true, type);
-        e.data.applyGravity = true;
+        Enemy e(m_app, m_instance, m_currentLevel, true, type);
         e.data.position = position;
         e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
         // std::cout << "rand x: " << e.data.velocity.x << std::endl;
         e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
-        m_entities.push_back(e);
+        m_entitiesToAdd.push_back(e);
     }
 
 private:
+    // NOTE: Self intance reference to share with entities
+    std::shared_ptr<Game> m_instance;
     std::shared_ptr<pudu::Application> m_app;
     pudu::ResourceManager m_resources;
 
@@ -465,6 +519,7 @@ private:
 
     std::array<std::string, NUM_ROWS> m_levelGrid;
 
+    std::vector<Entity> m_entitiesToAdd;
     std::vector<Entity> m_entities;
 
     // TODO: this std::optional feels overkill, but it avoids using -1 as an invalid value.
@@ -472,11 +527,52 @@ private:
     std::optional<uint32_t> m_playerIdx;
 };
 
+// NOTE: Player update method defined outside the struct body to use game object methods.
+void Player::update(float dt)
+{
+    auto& velocity = data.velocity;
+
+    velocity.x = 0;
+    if(ctx.app->isKeyPressed(pudu::Key::LEFT))
+    {
+        velocity.x -= 1;
+    }
+    if(ctx.app->isKeyPressed(pudu::Key::RIGHT))
+    {
+        velocity.x += 1;
+    }
+    if(ctx.app->isKeyJustPressed(pudu::Key::X) && data.landed && velocity.y == 0)
+    {
+        // std::cout << "jump" << std::endl; 
+        velocity.y = -PLAYER_JUMP_SPEED;
+        data.landed = false;
+    }
+    if(ctx.app->isKeyJustPressed(pudu::Key::Z))
+    {
+        // std::cout << "shoot bubble" << std::endl;
+        ctx.game->spawnBubble(data.position, data.facingRight ? 1 : -1);
+    }
+
+    float speed = PLAYER_SPEED;
+    if(velocity.y != 0)
+    {
+        speed /= 2;
+    }
+
+    if(velocity.x != 0)
+    {
+        data.facingRight = velocity.x > 0;
+    }
+
+    GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
+    MoveAndCollide(LEVELS[ctx.levelIndex], data, velocity.x, 0, speed * dt);
+}
+
 int main()
 {
     auto app = std::make_shared<pudu::Application>(WIDTH, HEIGHT, "Bubble Bobble");
 
-    Game game(app, 2);
+    Game game(app, 1);
 
     while(app->isRunning())
     {
