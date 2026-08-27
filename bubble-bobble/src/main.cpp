@@ -27,6 +27,8 @@ constexpr uint32_t TILESET_TEXTURE_ROWS = 2;
 constexpr uint32_t TILESET_TEXTURE_COLUMNS = 2;
 
 const std::filesystem::path BUB_TEXTURE_PATH = "assets/bub.png";
+const std::filesystem::path ENEMY_1_TEXTURE_PATH = "assets/enemy_1.png";
+const std::filesystem::path BUBBLE_GREEN_TEXTURE_PATH = "assets/bubble_green.png";
 
 using Level = std::array<std::string, NUM_ROWS>;
 const std::vector<Level> LEVELS = {
@@ -106,6 +108,12 @@ struct EntityData
     bool facingRight = true;
     bool landed = false;
     bool topCollision = false;
+};
+
+struct Sprite
+{
+    std::shared_ptr<pudu::Texture> texture;
+    glm::vec2 spriteSize;
 };
 
 // NOTE: Free functions to work with EntityData
@@ -215,8 +223,7 @@ struct Player
     EntityContext ctx;
     EntityData data;
 
-    std::shared_ptr<pudu::Texture> texture;
-    glm::vec2 spriteSize;
+    Sprite sprite;
 
     Player(
         std::shared_ptr<pudu::Application> app, 
@@ -227,11 +234,6 @@ struct Player
         ctx = { app, game, level };
         data.isActive = active;
         data.applyGravity = true;
-
-        // TODO: Player texture should be set according to the number of players
-        texture = std::make_shared<pudu::Texture>(BUB_TEXTURE_PATH);
-        texture->setRows(1);
-        texture->setColumns(2);
     }
 
     // NOTE: Player update method defined outside the struct body to use game object methods.
@@ -239,7 +241,7 @@ struct Player
 
     void draw()
     {
-        ctx.app->drawTextureFrame(*texture, data.position, spriteSize, 0, 0, glm::vec4(1), !data.facingRight);
+        ctx.app->drawTextureFrame(*sprite.texture, data.position, sprite.spriteSize, 0, 0, glm::vec4(1), !data.facingRight);
     }
 
 };
@@ -254,6 +256,8 @@ struct Enemy
 {
     EntityContext ctx;
     EntityData data;
+
+    Sprite sprite;
 
     EnemyType type = EnemyType::Normal;
     float chageDirectionTimer = 0.0f;
@@ -296,11 +300,17 @@ struct Enemy
             data.velocity.x = directions[dirIdx];
             chageDirectionTimer = pudu::utils::GetRandomFloat(1, 4);
         }
+
+        if(data.velocity.x != 0)
+        {
+            data.facingRight = data.velocity.x > 0;
+        }
     }
 
     void draw()
     {
-        ctx.app->drawRect(data.position, data.size, 0, { 0, 0, 1, 1 });
+        ctx.app->drawTextureFrame(*sprite.texture, data.position, sprite.spriteSize, 0, 0, glm::vec4(1), data.facingRight);
+        // ctx.app->drawRect(data.position, data.size, 0, { 0, 0, 1, 1 });
     }
 
 };
@@ -309,6 +319,8 @@ struct Bubble
 {
     EntityContext ctx;
     EntityData data;
+
+    Sprite sprite;
 
     float floatingTime = 1.0f;
     float lifeTime = 5.0f;
@@ -355,10 +367,7 @@ struct Bubble
 
     void draw()
     {
-        if(data.isActive)
-        {
-            ctx.app->drawRect(data.position, data.size, 0, { 0.5, 0.5, 1, 1 });
-        }
+        ctx.app->drawTextureFrame(*sprite.texture, data.position, sprite.spriteSize, 3, 0, glm::vec4(1));
     }
 };
 
@@ -469,7 +478,29 @@ public:
         b.data.position = position;
         b.data.velocity.x = directionX;
         b.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+
+        b.sprite.texture = m_resources.loadTexture(BUBBLE_GREEN_TEXTURE_PATH.string(), BUBBLE_GREEN_TEXTURE_PATH);
+        b.sprite.texture->setRows(1);
+        b.sprite.texture->setColumns(7);
+        b.sprite.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
+
         m_entitiesToAdd.push_back(b);
+    }
+
+    void spawnEnemy(glm::vec2 position, EnemyType type)
+    {
+        // TODO: Setup enemy properties according the type.
+        Enemy e(m_app, m_instance, m_currentLevel, true, type);
+        e.data.position = position;
+        e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
+        e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+        // TODO: Texture should be set according to the enemy type and state
+        e.sprite.texture = m_resources.loadTexture(ENEMY_1_TEXTURE_PATH.string(), ENEMY_1_TEXTURE_PATH);
+        e.sprite.texture->setRows(1);
+        e.sprite.texture->setColumns(2);
+        e.sprite.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
+
+        m_entitiesToAdd.push_back(e);
     }
 
 private:
@@ -487,7 +518,12 @@ private:
             Player p(m_app, m_instance, m_currentLevel, true);
             p.data.position = { 120, 768 };
             p.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
-            p.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
+            
+            // TODO: Player texture should be set according to the number of players
+            p.sprite.texture = m_resources.loadTexture(BUB_TEXTURE_PATH.string(), BUB_TEXTURE_PATH);
+            p.sprite.texture->setRows(1);
+            p.sprite.texture->setColumns(2);
+            p.sprite.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
 
             m_playerIdx = m_entities.size();
             m_entities.push_back(p);
@@ -495,17 +531,6 @@ private:
 
         glm::vec2 enemyPos = { 200, 760 };
         spawnEnemy(enemyPos, EnemyType::Normal);
-    }
-
-    void spawnEnemy(glm::vec2 position, EnemyType type)
-    {
-        // TODO: Setup enemy properties according the type.
-        Enemy e(m_app, m_instance, m_currentLevel, true, type);
-        e.data.position = position;
-        e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
-        // std::cout << "rand x: " << e.data.velocity.x << std::endl;
-        e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
-        m_entitiesToAdd.push_back(e);
     }
 
 private:
