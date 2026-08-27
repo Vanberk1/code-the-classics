@@ -368,11 +368,15 @@ public:
 
         for(auto& ent : m_entities)
         {
-            if(auto* enemy = std::get_if<Enemy>(&ent))
-            {
-                enemy->targetPos = playerPos;
-            }
-            std::visit([dt](auto&& e) { e.update(dt); }, ent);
+            
+            std::visit([dt, &playerPos](auto&& e) { 
+                // Check at compilation if the entity is an enemy to set target position.
+                if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Enemy>)
+                {
+                    e.targetPos = playerPos;
+                }
+                e.update(dt); 
+            }, ent);
         }        
     }
 
@@ -382,6 +386,7 @@ public:
         // Draw level grid
         for(size_t y = 0; y < NUM_ROWS; ++y)
         {
+            // NOTE: All levels have two vertical lines at both edges of the screen
             glm::vec2 leftBlockPos = { HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
             glm::vec2 rightBlockPos = { WIDTH - HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
             m_app->drawTextureFrame(*texture, leftBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
@@ -446,7 +451,7 @@ private:
         e.data.applyGravity = true;
         e.data.position = position;
         e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
-        std::cout << "rand x: " << e.data.velocity.x << std::endl;
+        // std::cout << "rand x: " << e.data.velocity.x << std::endl;
         e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
         m_entities.push_back(e);
     }
@@ -463,6 +468,7 @@ private:
     std::vector<Entity> m_entities;
 
     // TODO: this std::optional feels overkill, but it avoids using -1 as an invalid value.
+    // For the moment expects only one player.
     std::optional<uint32_t> m_playerIdx;
 };
 
