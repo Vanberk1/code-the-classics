@@ -83,141 +83,143 @@ const std::vector<Level> LEVELS = {
     }
 };
 
-struct EntityBase
-{
-    EntityBase(pudu::Application& app) : app(app) {}
-    virtual void update(float dt) {}
-    virtual void draw() {}
+template <typename T> int sign(T val) {
+    return (T(0) < val) - (val < T(0));
+}
 
-    pudu::Application& app;
-    bool isActive = false; // should be true or false by default?
-    glm::vec2 position = { 0, 0 };
+struct EntityContext
+{
+    std::shared_ptr<pudu::Application> app;
+    uint32_t levelIndex;
 };
 
-struct Game;
-struct PhysicsEntity : EntityBase
+// TODO: Maybe separate entity data in different components
+struct EntityData
 {
-    PhysicsEntity(pudu::Application& app, uint32_t level, bool gravity = false) 
-    : EntityBase(app), levelGridIndex(level), applyGravity(gravity)
-    {}
-
-    void update(float dt) override
-    {
-        if(applyGravity)
-        {
-            velocity.y = std::min(velocity.y + GRAVITY, MAX_FALL_SPEED);
-            // std::cout << "velocity (" << velocity.x << ", " << velocity.y << ")" << std::endl;
-            if(moveAndCollide(0, velocity.y > 0 ? 1 : -1, std::abs(velocity.y * dt)))
-            {
-                landed = true;
-                topCollision = false;
-            }
-        }
-        
-        if(position.y > HEIGHT)
-        {
-            position.y = 0;
-        }
-    }
-
-    bool moveAndCollide(float dx, float dy, float speed)
-    {
-        glm::vec2 newPos = position + glm::vec2(dx, dy) * speed;
-
-        glm::vec2 bottom = { newPos.x, newPos.y + size.y / 2 };
-        glm::vec2 top = { newPos.x, newPos.y - size.y / 2 };
-        glm::vec2 left = { newPos.x - size.x / 2, newPos.y };
-        glm::vec2 right = { newPos.x + size.x / 2, newPos.y };
-        
-        if(left.x < LEVEL_X_OFFSET || right.x > WIDTH - LEVEL_X_OFFSET)
-        {
-            return true;
-        }
-
-        bool collided = false;
-        // TODO: Replace with proper AABB collision to avoid subtracting a 
-        // small factor to prevent entities from getting stuck in blocks
-
-        // left and right positions are downscaled a little bit to prevent entities from getting stuck in tight spaces
-        if((dy > 0) && (isBlock(bottom) || isBlock({ left.x * 1.01f, bottom.y }) || isBlock({ right.x * 0.99f, bottom.y })))
-        {
-            // Prevents player to get stuck in a column of tiles.
-            if(isBlock(position))
-            {
-                collided = false;
-            }
-            else 
-            {
-                position.y = static_cast<uint32_t>(newPos.y / BLOCK_SIZE) * BLOCK_SIZE - 0.01f;
-                velocity.y = 0;
-                collided = true;
-            }
-        }
-        else if(dy < 0 && isBlock(top))
-        {
-            topCollision = true;
-        }
-        
-        if((dx < 0) && !topCollision && (isBlock(left) || isBlock({ left.x, bottom.y }) || isBlock({ left.x, top.y })))
-        {
-            position.x = (static_cast<uint32_t>((newPos.x) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
-            velocity.x = 0;
-            collided = true;
-            
-        }
-        else if((dx > 0) && !topCollision && (isBlock(right) || isBlock({ right.x, bottom.y }) || isBlock({ right.x, top.y })))
-        {
-            position.x = (static_cast<uint32_t>((right.x - LEVEL_X_OFFSET) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
-            velocity.x = 0;
-            collided = true;
-        }
-
-        if(!collided)
-        {
-            position = newPos;
-        }
-
-        return collided;
-    }
-
-    bool isBlock(glm::vec2 pos)
-    {
-        uint32_t gridX = static_cast<uint32_t>((pos.x - LEVEL_X_OFFSET) / BLOCK_SIZE);
-        uint32_t gridY = static_cast<uint32_t>(pos.y / BLOCK_SIZE);
-
-        // std::cout << "posX: " << pos.x << " posY: " << pos.y << std::endl;
-        // std::cout << "gridX: " << gridX << " gridY: " << gridY << std::endl;
-
-        if(gridY > 0 && gridY < NUM_ROWS && gridX >= 0 && gridX < NUM_COLUMNS)
-        {
-            auto levelGrid = LEVELS[levelGridIndex];
-            auto row = levelGrid[gridY];
-            return row.size() > 0 and row[gridX] != ' ';
-        }
-            
-        return false;
-    }
-
-    // Needed to check collision with the level blocks
-    uint32_t levelGridIndex;
-
-    glm::vec2 size = { 0, 0 };
-    glm::vec2 velocity = { 0, 0 };
+    glm::vec2 position;
+    glm::vec2 size;
+    glm::vec2 velocity;
+    bool isActive = false;
     bool applyGravity = false;
+    bool facingRight = true;
     bool landed = false;
-    
-    // TODO: This flag prevents player from collide 
-    // horizontally while jumping up through tiles.
-    // Remove or replace with some state machine.
-    bool topCollision = false; 
+    bool topCollision = false;
 };
 
-struct Player : PhysicsEntity
+// NOTE: Free functions to work with EntityData
+namespace
 {
-    Player(pudu::Application& app, uint32_t level, bool active)
-    : PhysicsEntity(app, level)
-    { 
-        isActive = active;
+
+bool IsBlock(const Level& level, glm::vec2 pos)
+{
+    uint32_t gridX = static_cast<uint32_t>((pos.x - LEVEL_X_OFFSET) / BLOCK_SIZE);
+    uint32_t gridY = static_cast<uint32_t>(pos.y / BLOCK_SIZE);
+
+    // std::cout << "posX: " << pos.x << " posY: " << pos.y << std::endl;
+    // std::cout << "gridX: " << gridX << " gridY: " << gridY << std::endl;
+
+    if(gridY > 0 && gridY < NUM_ROWS && gridX >= 0 && gridX < NUM_COLUMNS)
+    {
+        auto row = level[gridY];
+        return row.size() > 0 and row[gridX] != ' ';
+    }
+        
+    return false;
+}
+
+bool MoveAndCollide(const Level& level, EntityData& data, float dx, float dy, float speed)
+{
+    glm::vec2 newPos = data.position + glm::vec2(dx, dy) * speed;
+
+    glm::vec2 bottom = { newPos.x, newPos.y + data.size.y / 2 };
+    glm::vec2 top = { newPos.x, newPos.y - data.size.y / 2 };
+    glm::vec2 left = { newPos.x - data.size.x / 2, newPos.y };
+    glm::vec2 right = { newPos.x + data.size.x / 2, newPos.y };
+    
+    if(left.x < LEVEL_X_OFFSET || right.x > WIDTH - LEVEL_X_OFFSET)
+    {
+        return true;
+    }
+
+    bool collided = false;
+    // TODO: Replace with proper AABB collision to avoid subtracting a 
+    // small factor to prevent entities from getting stuck in blocks
+
+    // left and right positions are downscaled a little bit to prevent entities from getting stuck in tight spaces
+    if((dy > 0) && (IsBlock(level, bottom) || IsBlock(level, { left.x * 1.01f, bottom.y }) || IsBlock(level, { right.x * 0.99f, bottom.y })))
+    {
+        // Prevents player to get stuck in a column of tiles.
+        if(IsBlock(level, data.position))
+        {
+            collided = false;
+        }
+        else 
+        {
+            data.position.y = static_cast<uint32_t>(newPos.y / BLOCK_SIZE) * BLOCK_SIZE - 0.01f;
+            data.velocity.y = 0;
+            collided = true;
+        }
+    }
+    else if(dy < 0 && IsBlock(level, top))
+    {
+        data.topCollision = true;
+    }
+    
+    if((dx < 0) && !data.topCollision && (IsBlock(level, left) || IsBlock(level, { left.x, bottom.y }) || IsBlock(level, { left.x, top.y })))
+    {
+        data.position.x = (static_cast<uint32_t>((newPos.x) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
+        data.velocity.x = 0;
+        collided = true;
+        
+    }
+    else if((dx > 0) && !data.topCollision && (IsBlock(level, right) || IsBlock(level, { right.x, bottom.y }) || IsBlock(level, { right.x, top.y })))
+    {
+        data.position.x = (static_cast<uint32_t>((right.x - LEVEL_X_OFFSET) / BLOCK_SIZE) + 1) * BLOCK_SIZE;
+        data.velocity.x = 0;
+        collided = true;
+    }
+
+    if(!collided)
+    {
+        data.position = newPos;
+    }
+
+    return collided;
+}
+
+void GravityUpdate(const Level& level, EntityData& data, float dt)
+{
+    if(data.applyGravity)
+    {
+        data.velocity.y = std::min(data.velocity.y + GRAVITY, MAX_FALL_SPEED);
+        // std::cout << "velocity (" << velocity.x << ", " << velocity.y << ")" << std::endl;
+        if(MoveAndCollide(level, data, 0, data.velocity.y > 0 ? 1 : -1, std::abs(data.velocity.y * dt)))
+        {
+            data.landed = true;
+            data.topCollision = false;
+        }
+    }
+
+    if(data.position.y > HEIGHT)
+    {
+        data.position.y = 0;
+    }
+}
+
+}
+
+struct Player
+{
+    EntityContext ctx;
+    EntityData data;
+
+    std::shared_ptr<pudu::Texture> texture;
+    glm::vec2 spriteSize;
+
+    Player(std::shared_ptr<pudu::Application> app, uint32_t level, bool active)
+    {
+        ctx = { app, level };
+        data.isActive = active;
 
         // TODO: Player texture should be set according to the number of players
         texture = std::make_shared<pudu::Texture>(BUB_TEXTURE_PATH);
@@ -225,24 +227,26 @@ struct Player : PhysicsEntity
         texture->setColumns(2);
     }
 
-    void update(float dt) override
+    void update(float dt)
     {
-        PhysicsEntity::update(dt);
+        // PhysicsEntity::update(dt);
+
+        auto& velocity = data.velocity;
 
         velocity.x = 0;
-        if(app.isKeyPressed(pudu::Key::LEFT))
+        if(ctx.app->isKeyPressed(pudu::Key::LEFT))
         {
             velocity.x -= 1;
         }
-        if(app.isKeyPressed(pudu::Key::RIGHT))
+        if(ctx.app->isKeyPressed(pudu::Key::RIGHT))
         {
             velocity.x += 1;
         }
-        if(app.isKeyJustPressed(pudu::Key::Z) && landed && velocity.y == 0)
+        if(ctx.app->isKeyJustPressed(pudu::Key::Z) && data.landed && velocity.y == 0)
         {
             // std::cout << "jump" << std::endl; 
             velocity.y = -PLAYER_JUMP_SPEED;
-            landed = false;
+            data.landed = false;
         }
 
         float speed = PLAYER_SPEED;
@@ -253,39 +257,75 @@ struct Player : PhysicsEntity
 
         if(velocity.x != 0)
         {
-            facingRight = velocity.x > 0;
+            data.facingRight = velocity.x > 0;
         }
 
-        moveAndCollide(velocity.x, 0, speed * dt);
+        GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
+        MoveAndCollide(LEVELS[ctx.levelIndex], data, velocity.x, 0, speed * dt);
     }
 
-    void draw() override
+    void draw()
     {
-        app.drawTextureFrame(*texture, position, spriteSize, 0, 0, glm::vec4(1), !facingRight);
+        ctx.app->drawTextureFrame(*texture, data.position, spriteSize, 0, 0, glm::vec4(1), !data.facingRight);
     }
 
-    std::shared_ptr<pudu::Texture> texture;
-    glm::vec2 spriteSize;
-    bool facingRight = true;
+
 };
 
-struct Enemy : PhysicsEntity
+enum class EnemyType
 {
-    Enemy(pudu::Application& app, uint32_t level, bool active)
-    : PhysicsEntity(app, level)
-    { 
-        isActive = active; 
-    }
+    Normal,
+    Aggressive
+};
 
-    void update(float dt) override
+struct Enemy
+{
+    EntityContext ctx;
+    EntityData data;
+
+    EnemyType type = EnemyType::Normal;
+    float chageDirectionTimer = 0.0f;
+    std::optional<glm::vec2> targetPos;
+
+    Enemy(std::shared_ptr<pudu::Application> app, uint32_t level, bool active, EnemyType type)
+    : type(type)
     {
-
+        ctx = { app, level };
+        data.isActive = active;
     }
 
-    void draw() override
+    void update(float dt)
     {
-        app.drawRect({ 300, 300 }, { 150, 100 }, 0, { 0, 0, 1, 1 });
+        
+        chageDirectionTimer -= dt;
+        
+        GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
+        
+        if(MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * dt))
+        {
+            data.velocity.x = -data.velocity.x;
+            chageDirectionTimer = 0.0f;
+        }
+        
+        if(chageDirectionTimer <= 0.0f)
+        {
+            std::vector<int> directions = { -1, 1 };
+            if(targetPos)
+            {
+                directions.push_back(sign(targetPos->x - data.position.x) < 0 ? -1 : 1);
+            }
+
+            int dirIdx = pudu::utils::GetRandomInt(0, directions.size() - 1);
+            data.velocity.x = directions[dirIdx];
+            chageDirectionTimer = pudu::utils::GetRandomFloat(1, 4);
+        }
     }
+
+    void draw()
+    {
+        ctx.app->drawRect(data.position, data.size, 0, { 0, 0, 1, 1 });
+    }
+
 };
 
 using Entity = std::variant<Player, Enemy>;
@@ -293,7 +333,7 @@ using Entity = std::variant<Player, Enemy>;
 class Game
 {
 public:
-    Game(pudu::Application& app, uint32_t players = 0, uint32_t level = 0) 
+    Game(std::shared_ptr<pudu::Application> app, uint32_t players = 0, uint32_t level = 0) 
     : m_app(app), m_numPlayers(players), m_currentLevel(level)
     {
         auto tilesetTexture = 
@@ -306,22 +346,32 @@ public:
 
     void update()
     {
-        float dt = m_app.getDeltaTime();
+        float dt = m_app->getDeltaTime();
 
-        if(m_app.isKeyJustPressed(pudu::Key::ESCAPE))
+        if(m_app->isKeyJustPressed(pudu::Key::ESCAPE))
         {
-            m_app.close();
+            m_app->close();
             return;
         }
 
-        if(m_app.isKeyJustPressed(pudu::Key::SPACE))
+        if(m_app->isKeyJustPressed(pudu::Key::SPACE))
         {
             m_currentLevel = (m_currentLevel + 1) % LEVELS.size();
             playCurrentLevel();
         }
 
+        std::optional<glm::vec2> playerPos = std::nullopt;
+        if(m_playerIdx && m_playerIdx < m_entities.size())
+        {
+            playerPos = std::get<Player>(m_entities[*m_playerIdx]).data.position;
+        }
+
         for(auto& ent : m_entities)
         {
+            if(auto* enemy = std::get_if<Enemy>(&ent))
+            {
+                enemy->targetPos = playerPos;
+            }
             std::visit([dt](auto&& e) { e.update(dt); }, ent);
         }        
     }
@@ -334,10 +384,10 @@ public:
         {
             glm::vec2 leftBlockPos = { HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
             glm::vec2 rightBlockPos = { WIDTH - HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE  };
-            m_app.drawTextureFrame(*texture, leftBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
-            m_app.drawTextureFrame(*texture, leftBlockPos + glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
-            m_app.drawTextureFrame(*texture, rightBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
-            m_app.drawTextureFrame(*texture, rightBlockPos - glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app->drawTextureFrame(*texture, leftBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app->drawTextureFrame(*texture, leftBlockPos + glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app->drawTextureFrame(*texture, rightBlockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+            m_app->drawTextureFrame(*texture, rightBlockPos - glm::vec2(BLOCK_SIZE, 0), { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
             
             auto row = m_levelGrid[y];
             if(row.empty())
@@ -351,7 +401,7 @@ public:
                 if(row[x] != ' ')
                 {
                     glm::vec2 blockPos = { offsetX + HALF_BLOCK_SIZE, (y * BLOCK_SIZE) + HALF_BLOCK_SIZE };
-                    m_app.drawTextureFrame(*texture, blockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
+                    m_app->drawTextureFrame(*texture, blockPos, { BLOCK_SIZE, BLOCK_SIZE }, m_currentLevel);
                 }
                 offsetX += BLOCK_SIZE;
             }
@@ -370,23 +420,39 @@ private:
 
         m_levelGrid = LEVELS[m_currentLevel];
 
+        m_playerIdx = std::nullopt;
         m_entities.clear();
 
         for(uint32_t i = 0; i < m_numPlayers; ++i)
         {
             Player p(m_app, m_currentLevel, true);
-            p.applyGravity = true;
-            p.position = { 120, 768 };
-            p.size = glm::vec2(16 * SCALE_FACTOR * 2);
+            p.data.position = { 120, 768 };
+            p.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+            p.data.applyGravity = true;
             p.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
+
+            m_playerIdx = m_entities.size();
             m_entities.push_back(p);
         }
 
-        // m_entities.push_back(Enemy(m_app, m_levelGrid, true));
+        glm::vec2 enemyPos = { 200, 760 };
+        spawn_enemy(enemyPos, EnemyType::Normal);
+    }
+
+    void spawn_enemy(glm::vec2 position, EnemyType type)
+    {
+        // TODO: Setup enemy properties according the type.
+        Enemy e(m_app, m_currentLevel, true, type);
+        e.data.applyGravity = true;
+        e.data.position = position;
+        e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
+        std::cout << "rand x: " << e.data.velocity.x << std::endl;
+        e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+        m_entities.push_back(e);
     }
 
 private:
-    pudu::Application& m_app;
+    std::shared_ptr<pudu::Application> m_app;
     pudu::ResourceManager m_resources;
 
     uint32_t m_numPlayers;
@@ -395,25 +461,28 @@ private:
     std::array<std::string, NUM_ROWS> m_levelGrid;
 
     std::vector<Entity> m_entities;
+
+    // TODO: this std::optional feels overkill, but it avoids using -1 as an invalid value.
+    std::optional<uint32_t> m_playerIdx;
 };
 
 int main()
 {
-    pudu::Application app(WIDTH, HEIGHT, "Bubble Bobble");
+    auto app = std::make_shared<pudu::Application>(WIDTH, HEIGHT, "Bubble Bobble");
 
     Game game(app, 2);
 
-    while(app.isRunning())
+    while(app->isRunning())
     {
-        app.processInput();
+        app->processInput();
         
         game.update();
         
-        app.clearFrame({ 0, 0, 0, 1 });
+        app->clearFrame({ 0, 0, 0, 1 });
 
         game.draw();
         
-        app.showFrame();
+        app->showFrame();
     }
 
     return 0;
