@@ -276,36 +276,8 @@ struct Enemy
         data.applyGravity = true;
     }
 
-    void update(float dt)
-    {
-        chageDirectionTimer -= dt;
-        
-        GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
-        
-        if(MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * dt))
-        {
-            data.velocity.x = -data.velocity.x;
-            chageDirectionTimer = 0.0f;
-        }
-        
-        if(chageDirectionTimer <= 0.0f)
-        {
-            std::vector<int> directions = { -1, 1 };
-            if(targetPos)
-            {
-                directions.push_back(sign(targetPos->x - data.position.x) < 0 ? -1 : 1);
-            }
-
-            int dirIdx = pudu::utils::GetRandomInt(0, directions.size() - 1);
-            data.velocity.x = directions[dirIdx];
-            chageDirectionTimer = pudu::utils::GetRandomFloat(1, 4);
-        }
-
-        if(data.velocity.x != 0)
-        {
-            data.facingRight = data.velocity.x > 0;
-        }
-    }
+    // NOTE: Enemy update method defined outside the struct body to use game object methods.
+    void update(float dt);
 
     void draw()
     {
@@ -326,6 +298,8 @@ struct Bubble
     float lifeTime = 5.0f;
     bool floating = false;
 
+    std::optional<EnemyType> trappedEnemy;
+    
     Bubble(
         std::shared_ptr<pudu::Application> app,
         std::shared_ptr<Game> game,
@@ -342,7 +316,7 @@ struct Bubble
         lifeTime -= dt;
         floatingTime -= dt;
 
-        if(floatingTime <= 0.0f)
+        if(floatingTime <= 0.0f || trappedEnemy)
         {
             floating = true;
             data.velocity = { 0, -1 };
@@ -367,6 +341,7 @@ struct Bubble
 
     void draw()
     {
+        // TODO: Frame should be set according to the trapped enemy texture.
         ctx.app->drawTextureFrame(*sprite.texture, data.position, sprite.spriteSize, 3, 0, glm::vec4(1));
     }
 };
@@ -497,11 +472,13 @@ public:
         // TODO: Texture should be set according to the enemy type and state
         e.sprite.texture = m_resources.loadTexture(ENEMY_1_TEXTURE_PATH.string(), ENEMY_1_TEXTURE_PATH);
         e.sprite.texture->setRows(1);
-        e.sprite.texture->setColumns(2);
+        e.sprite.texture->setColumns(4);
         e.sprite.spriteSize = glm::vec2(20 * SCALE_FACTOR * 2);
 
         m_entitiesToAdd.push_back(e);
     }
+
+    std::vector<Entity>& entities() { return m_entities; }
 
 private:
     void playCurrentLevel()
@@ -591,6 +568,56 @@ void Player::update(float dt)
 
     GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
     MoveAndCollide(LEVELS[ctx.levelIndex], data, velocity.x, 0, speed * dt);
+}
+
+// NOTE: Enemy update method defined outside the struct body to use game object methods.
+// TODO: Separate classes in different files.
+void Enemy::update(float dt)
+{
+    chageDirectionTimer -= dt;
+    
+    GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
+    
+    if(MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * dt))
+    {
+        data.velocity.x = -data.velocity.x;
+        chageDirectionTimer = 0.0f;
+    }
+    
+    if(chageDirectionTimer <= 0.0f)
+    {
+        std::vector<int> directions = { -1, 1 };
+        if(targetPos)
+        {
+            directions.push_back(sign(targetPos->x - data.position.x) < 0 ? -1 : 1);
+        }
+
+        int dirIdx = pudu::utils::GetRandomInt(0, directions.size() - 1);
+        data.velocity.x = directions[dirIdx];
+        chageDirectionTimer = pudu::utils::GetRandomFloat(1, 4);
+    }
+
+    if(data.velocity.x != 0)
+    {
+        data.facingRight = data.velocity.x > 0;
+    }
+
+    for(auto& ent : ctx.game->entities())
+    {
+        std::visit([this](auto&& e) { 
+            // Check at compilation if the entity is an enemy to set target position.
+            if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Bubble>)
+            {
+                if(glm::distance(data.position, e.data.position) < data.size.x / 2)
+                {
+                    data.isActive = false;
+                    e.trappedEnemy = type;
+                    // TODO: Make a better way to set texture and frame of trapped enemies
+                    e.sprite.texture = sprite.texture;
+                }
+            }
+        }, ent);
+    }
 }
 
 int main()
