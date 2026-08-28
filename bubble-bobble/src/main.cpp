@@ -271,6 +271,7 @@ struct Enemy
     EnemyType type = EnemyType::ZenChan;
     EnemyState state = EnemyState::Normal;
     float chageDirectionTimer = 0.0f;
+    float jumpTimer = 0.0f;
     std::optional<glm::vec2> targetPos;
 
     Enemy(
@@ -481,6 +482,7 @@ public:
         e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
         e.data.facingRight = direction.x > 0;
         e.chageDirectionTimer = 5.0f;
+        e.jumpTimer = 5.0f;
         // TODO: Texture should be set according to the enemy type and state
         e.sprite.texture = m_resources.loadTexture(ENEMY_1_TEXTURE_PATH.string(), ENEMY_1_TEXTURE_PATH);
         e.sprite.texture->setRows(1);
@@ -596,6 +598,7 @@ void Enemy::update(float dt)
     GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
 
     chageDirectionTimer -= dt;
+    jumpTimer -= dt;
         
     if(data.velocity.y == 0.0f && MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * 0.7f * dt))
     {
@@ -603,7 +606,12 @@ void Enemy::update(float dt)
         chageDirectionTimer = 0.0f;
     }
     
-    if(chageDirectionTimer <= 0.0f)
+    if(jumpTimer <= 0.0f && targetPos->y < data.position.y && std::abs(targetPos->x - data.position.x) < data.size.x)
+    {
+        data.velocity.y = -PLAYER_JUMP_SPEED;
+        jumpTimer = pudu::utils::GetRandomFloat(2, 5);
+    }
+    else if(chageDirectionTimer <= 0.0f)
     {
         std::vector<int> directions = { -1, 1 };
         if(targetPos)
