@@ -16,6 +16,8 @@ constexpr uint32_t NUM_COLUMNS = 28;
 constexpr uint32_t WIDTH = NUM_COLUMNS * BLOCK_SIZE + 4 * BLOCK_SIZE;
 constexpr uint32_t HEIGHT = NUM_ROWS * BLOCK_SIZE;
 
+// TODO: Create constant variables for other entities. 
+// Now enemies and bubbles use player's variables with some harcoded scale factor.
 constexpr float GRAVITY = 20.0f;
 constexpr float PLAYER_SPEED = 250.0f;
 constexpr float PLAYER_JUMP_SPEED = 650.0f;
@@ -230,8 +232,8 @@ struct Player
         std::shared_ptr<Game> game, 
         uint32_t level, 
         bool active)
+    : ctx({ app, game, level })
     {
-        ctx = { app, game, level };
         data.isActive = active;
         data.applyGravity = true;
     }
@@ -246,7 +248,14 @@ struct Player
 
 };
 
+// TODO: Implement all other enemies someday
+// Zen-chan, Maita, Monsta, Pulpul, Banebou, Hidegons, Drunk, Invader, Skel-Monsta, Rascal
 enum class EnemyType
+{
+    ZenChan
+};
+
+enum class EnemyState
 {
     Normal,
     Aggressive
@@ -259,7 +268,8 @@ struct Enemy
 
     Sprite sprite;
 
-    EnemyType type = EnemyType::Normal;
+    EnemyType type = EnemyType::ZenChan;
+    EnemyState state = EnemyState::Normal;
     float chageDirectionTimer = 0.0f;
     std::optional<glm::vec2> targetPos;
 
@@ -268,10 +278,10 @@ struct Enemy
         std::shared_ptr<Game> game,
         uint32_t level, 
         bool active, 
-        EnemyType type)
-    : type(type)
+        EnemyType type,
+        EnemyState state)
+    : ctx({ app, game, level }), type(type), state(state)
     {
-        ctx = { app, game, level };
         data.isActive = active;
         data.applyGravity = true;
     }
@@ -462,13 +472,15 @@ public:
         m_entitiesToAdd.push_back(b);
     }
 
-    void spawnEnemy(glm::vec2 position, EnemyType type)
+    void spawnEnemy(glm::vec2 position, glm::vec2 direction, EnemyType type, EnemyState state)
     {
         // TODO: Setup enemy properties according the type.
-        Enemy e(m_app, m_instance, m_currentLevel, true, type);
+        Enemy e(m_app, m_instance, m_currentLevel, true, type, state);
         e.data.position = position;
-        e.data.velocity.x = pudu::utils::GetRandomInt(-10, 10) > 0 ? 1 : -1;
+        e.data.velocity = (direction.length() == 0) ? direction : glm::normalize(direction);
         e.data.size = glm::vec2(16 * SCALE_FACTOR * 2);
+        e.data.facingRight = direction.x > 0;
+        e.chageDirectionTimer = 5.0f;
         // TODO: Texture should be set according to the enemy type and state
         e.sprite.texture = m_resources.loadTexture(ENEMY_1_TEXTURE_PATH.string(), ENEMY_1_TEXTURE_PATH);
         e.sprite.texture->setRows(1);
@@ -506,8 +518,15 @@ private:
             m_entities.push_back(p);
         }
 
-        glm::vec2 enemyPos = { 200, 760 };
-        spawnEnemy(enemyPos, EnemyType::Normal);
+        std::vector<glm::vec2> enemyPositionsLevel1 = {
+            { WIDTH / 2, 0 },
+            { WIDTH / 2, -64 },
+            { WIDTH / 2, -128 }
+        };
+        for(const auto& pos : enemyPositionsLevel1)
+        {
+            spawnEnemy(pos, { -1, 0 }, EnemyType::ZenChan, EnemyState::Normal);
+        }
     }
 
 private:
@@ -574,11 +593,11 @@ void Player::update(float dt)
 // TODO: Separate classes in different files.
 void Enemy::update(float dt)
 {
-    chageDirectionTimer -= dt;
-    
     GravityUpdate(LEVELS[ctx.levelIndex], data, dt);
-    
-    if(MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * dt))
+
+    chageDirectionTimer -= dt;
+        
+    if(data.velocity.y == 0.0f && MoveAndCollide(LEVELS[ctx.levelIndex], data, data.velocity.x, 0, PLAYER_SPEED * 0.7f * dt))
     {
         data.velocity.x = -data.velocity.x;
         chageDirectionTimer = 0.0f;
@@ -602,21 +621,28 @@ void Enemy::update(float dt)
         data.facingRight = data.velocity.x > 0;
     }
 
+    bool trapped = false;
     for(auto& ent : ctx.game->entities())
     {
-        std::visit([this](auto&& e) { 
+        std::visit([this, &trapped](auto&& e) { 
             // Check at compilation if the entity is an enemy to set target position.
             if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Bubble>)
             {
-                if(glm::distance(data.position, e.data.position) < data.size.x / 2)
+                if(!e.trappedEnemy && (glm::distance(data.position, e.data.position) < data.size.x / 2))
                 {
                     data.isActive = false;
                     e.trappedEnemy = type;
                     // TODO: Make a better way to set texture and frame of trapped enemies
                     e.sprite.texture = sprite.texture;
+                    trapped = true;
                 }
             }
         }, ent);
+
+        if(trapped)
+        {
+            break;
+        }
     }
 }
 
