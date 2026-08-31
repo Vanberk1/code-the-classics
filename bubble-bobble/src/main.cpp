@@ -3,6 +3,9 @@
 #include <iostream>
 #include <variant>
 
+constexpr uint32_t FPS = 60;
+constexpr float TARGET_DELTA_TIME = 1.0f / FPS;
+
 constexpr uint32_t SCALE_FACTOR = 2;
 
 constexpr uint32_t BLOCK_SIZE = 16 * SCALE_FACTOR;
@@ -227,6 +230,10 @@ struct Player
 
     Sprite sprite;
 
+    // TODO: Implement FSM to handle different actions
+    bool jumpActionPressed = false;
+    bool shootActionPressed = false;
+
     Player(
         std::shared_ptr<pudu::Application> app, 
         std::shared_ptr<Game> game, 
@@ -236,6 +243,18 @@ struct Player
     {
         data.isActive = active;
         data.applyGravity = true;
+    }
+
+    void handleInput()
+    {
+        if(ctx.app->isKeyJustPressed(pudu::Key::X))
+        {
+            jumpActionPressed = true;
+        }
+        if(ctx.app->isKeyJustPressed(pudu::Key::Z))
+        {
+            shootActionPressed = true;
+        }
     }
 
     // NOTE: Player update method defined outside the struct body to use game object methods.
@@ -373,11 +392,17 @@ public:
         tilesetTexture->setColumns(TILESET_TEXTURE_COLUMNS);
 
         playCurrentLevel();
+
+        m_currentTime = std::chrono::system_clock::now();
+        m_accumulator = 0.0f;
     }
 
     void update()
     {
-        float dt = m_app->getDeltaTime();
+        auto newTime = std::chrono::system_clock::now();
+        float frameTime = std::chrono::duration<float>(newTime - m_currentTime).count();
+        m_currentTime = newTime;
+        m_accumulator += frameTime;
 
         if(m_app->isKeyJustPressed(pudu::Key::ESCAPE))
         {
@@ -397,22 +422,29 @@ public:
             m_entitiesToAdd.clear();
         }
 
+        // TODO: Manage input for two players
         std::optional<glm::vec2> playerPos = std::nullopt;
-        if(m_playerIdx && m_playerIdx < m_entities.size())
+        if(m_playerIdx && *m_playerIdx < m_entities.size())
         {
-            playerPos = std::get<Player>(m_entities[*m_playerIdx]).data.position;
+            auto& player = std::get<Player>(m_entities[*m_playerIdx]);
+            player.handleInput();
+            playerPos = player.data.position;
         }
 
-        for(auto& ent : m_entities)
+        while(m_accumulator >= TARGET_DELTA_TIME)
         {
-            std::visit([dt, &playerPos](auto&& e) { 
-                // Check at compilation if the entity is an enemy to set target position.
-                if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Enemy>)
-                {
-                    e.targetPos = playerPos;
-                }
-                e.update(dt); 
-            }, ent);
+            for(auto& ent : m_entities)
+            {
+                std::visit([&playerPos](auto&& e) { 
+                    // Check at compilation if the entity is an enemy to set target position.
+                    if constexpr (std::is_same_v<std::decay_t<decltype(e)>, Enemy>)
+                    {
+                        e.targetPos = playerPos;
+                    }
+                    e.update(TARGET_DELTA_TIME); 
+                }, ent);
+            }
+            m_accumulator -= TARGET_DELTA_TIME;
         }
 
         std::erase_if(m_entities, [](auto& ent) {
@@ -548,6 +580,10 @@ private:
     // TODO: this std::optional feels overkill, but it avoids using -1 as an invalid value.
     // For the moment expects only one player.
     std::optional<uint32_t> m_playerIdx;
+
+    // TODO: Make pudu handle a fixed timestep for physics update.
+    std::chrono::time_point<std::chrono::system_clock> m_currentTime;
+    float m_accumulator = 0.0f;
 };
 
 // NOTE: Player update method defined outside the struct body to use game object methods.
@@ -564,17 +600,19 @@ void Player::update(float dt)
     {
         velocity.x += 1;
     }
-    if(ctx.app->isKeyJustPressed(pudu::Key::X) && data.landed && velocity.y == 0)
+    if(jumpActionPressed && data.landed && velocity.y == 0)
     {
         // std::cout << "jump" << std::endl; 
         velocity.y = -PLAYER_JUMP_SPEED;
         data.landed = false;
     }
-    if(ctx.app->isKeyJustPressed(pudu::Key::Z))
+    jumpActionPressed = false;
+    if(shootActionPressed)
     {
         // std::cout << "shoot bubble" << std::endl;
         ctx.game->spawnBubble(data.position, data.facingRight ? 1 : -1);
     }
+    shootActionPressed = false;
 
     float speed = PLAYER_SPEED;
     if(velocity.y != 0)
